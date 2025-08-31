@@ -1,28 +1,41 @@
 <script setup>
 import { ref, reactive } from "vue";
+import KeyManager from "@utils/KeyManager.js";
+import RealInfoSet from "@/utils/realInfo/RealInfoSet";
+import _ from "lodash";
 
-function generateTextByFetch(prompt) {
-  const data = [...contextMessages.value, prompt].join(";")
-  return fetch("/api/generate", {
+console.log(RealInfoSet, "toolSet");
+const chatMessages = ref([]);
+const renderMessage = computed(() => {
+  return chatMessages.value.filter(item => !!item.content && ["user","assistant"].includes(item.role));
+});
+
+const textArea = ref("");
+const chatBox = ref("");
+
+function generateTextByFetch() {
+  return fetch("https://api.deepseek.com/chat/completions", {
     method: "post",
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache"
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${KeyManager.DeepseekKey}`
     },
     body: JSON.stringify({
-      model: "deepseek-r1:7b",   // 换成你本地已 pull 的模型
-      prompt:data,
-      stream: true
+      model: "deepseek-chat",
+      messages: chatMessages.value,
+      stream: true,
+      tools: [RealInfoSet.getWeatherTool()]
     })
   });
 }
 
+const currentRequestTool = [];
 
-function handleStreamData(prompt) {
-  generateTextByFetch(prompt).then(async res => {
+function handleStreamData() {
+  generateTextByFetch().then(async res => {
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
-    const message = reactive({ type: "server", data: "" });
+    const message = reactive({ role: "assistant", content: "" });
     chatMessages.value.push(message);
     while (true) {
       try {
@@ -31,28 +44,66 @@ function handleStreamData(prompt) {
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split("\n").filter(item => !!item.trim());
         for (const line of lines) {
-          const data = JSON.parse(line);
-          message.data += data.response;
+          if (!line.startsWith("data: ")) continue;
+          const value = line.slice(6);
+          if (value === "[DONE]") continue;
+          const data = JSON.parse(value);
+          data?.choices?.map((choice) => {
+            if (choice.delta.content) {
+              message.content += choice.delta.content;
+            }
+            if (choice.delta.tool_calls) {
+              choice.delta.tool_calls.forEach((c) => {
+                const hasCall = currentRequestTool.find(item => item.index === c.index);
+                if (hasCall) {
+                  hasCall.function.arguments += c.function.arguments;
+                } else {
+                  currentRequestTool.push({
+                    index: c.index,
+                    id: c.id,
+                    type: c.type,
+                    function: {
+                      name: c.function.name,
+                      arguments: c.function.arguments
+                    }
+                  });
+                }
+              });
+            }
+            ;
+          });
           handleChatBoxScroll();
         }
       } catch (err) {
         await reader.cancel();
       }
     }
-    await reader.cancel();
+    if (currentRequestTool.length) {
+      console.log(currentRequestTool, "===");
+      currentRequestTool.forEach(item => {
+        const props = JSON.parse(item.function.arguments);
+        RealInfoSet[item.function.name](props.city || "110000").then(res => {
+          console.log(res, "天气调用完成！");
+          const { status, data } = res;
+          if (status === 200) {
+            const value = data.lives[0];
+            const info = `${value.city}的天气描述，实时气温：${value.temperature}摄氏度, 天气现象是:${value.weather}, 风向：${value.winddirection}, 风力级别：${value.windpower}级`;
+            console.log(info, "info");
+            chatMessages.value.push(
+              { role: "assistant", tool_calls: _.cloneDeep(currentRequestTool) },
+              { role: "tool", content: info, tool_call_id: item.id }
+            );
+            currentRequestTool.length = 0;
+            console.log("vix;");
+            handleStreamData();
+          }
+        }).catch(err => currentRequestTool.length = 0);
+      });
+    } else {
+      await reader.cancel();
+    }
   });
 }
-
-const chatMessages = ref([]);
-const contextMessages = computed(() => {
-  const length = chatMessages.value.length;
-  if (length <= 20) {
-    return chatMessages.value.map(item => `${item.type}: ${item.data}`);
-  }
-  return chatMessages.value.slice(length-20).map(item => `${item.type}: ${item.data}`);
-})
-const textArea = ref("");
-const chatBox = ref("");
 
 function handleChatBoxScroll() {
   chatBox.value.scrollTo({
@@ -61,19 +112,19 @@ function handleChatBoxScroll() {
   });
 }
 
-function handleSendEvent(value) {
-  chatMessages.value.push({ type: "client", data: String(value).trim() });
-  handleStreamData(value);
-  handleChatBoxScroll();
-}
 
 function handleKeyDownEvent(e) {
   if (e.keyCode === 13 && e.ctrlKey) {
     textArea.value += "\n";
   }
   if (e.keyCode === 13 && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-    handleSendEvent(String(textArea.value).trim());
-    textArea.value = ""
+    chatMessages.value.push({ role: "user", content: String(textArea.value).trim() });
+    nextTick(() => {
+      handleChatBoxScroll();
+    });
+    handleStreamData();
+
+    textArea.value = "";
     e.preventDefault();
   }
 }
@@ -82,10 +133,10 @@ function handleKeyDownEvent(e) {
 <template>
   <div class="chat-container">
     <div class="chat-box" ref="chatBox">
-      <div v-for="(item,index) in chatMessages" :key="index"
-           :class="['message-default',item.type === 'client'?'message-client':'message-server']"
+      <div v-for="(item,index) in renderMessage" :key="index"
+           :class="['message-default',item.role === 'user'?'message-client':'message-server']"
       >
-        {{ item.data }}
+        {{ item.content }}
       </div>
     </div>
     <div class="chat-message">
