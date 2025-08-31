@@ -1,5 +1,6 @@
-# Vue 3 + Vite
+# 项目介绍
+最近在学习人工智能方面的知识，希望可以借助这个项目把自己学习到的知识应用起来。
 
-This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
-
-Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
+# 功能描述
+- 普通聊天模式
+- 可以查询天气，接口使用的是高德api
