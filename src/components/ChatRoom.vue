@@ -37,6 +37,7 @@ function handleStreamData() {
     const decoder = new TextDecoder("utf-8");
     const message = reactive({ role: "assistant", content: "" });
     chatMessages.value.push(message);
+    // 返回流的处理
     while (true) {
       try {
         const { done, value } = await reader.read();
@@ -69,8 +70,7 @@ function handleStreamData() {
                   });
                 }
               });
-            }
-            ;
+            };
           });
           handleChatBoxScroll();
         }
@@ -78,6 +78,7 @@ function handleStreamData() {
         await reader.cancel();
       }
     }
+    await reader.cancel();
     if (currentRequestTool.length) {
       console.log(currentRequestTool, "===");
       currentRequestTool.forEach(item => {
@@ -99,8 +100,6 @@ function handleStreamData() {
           }
         }).catch(err => currentRequestTool.length = 0);
       });
-    } else {
-      await reader.cancel();
     }
   });
 }
